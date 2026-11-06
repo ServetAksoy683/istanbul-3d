@@ -32,6 +32,7 @@ jobs:
           targetPlatform: Android
           buildMethod: BuildScript.BuildAndroid
           androidExportType: androidPackage
+          androidTargetSdkVersion: AndroidApiLevel33
           allowDirtyBuild: true
       - name: APK yukle
         uses: actions/upload-artifact@v4
