@@ -35,6 +35,7 @@ jobs:
           androidTargetSdkVersion: AndroidApiLevel33
           allowDirtyBuild: true
       - name: APK yukle
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: IstanbulGame-APK
