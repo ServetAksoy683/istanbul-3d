@@ -1,5 +1,50 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
+
+
+public struct Ptr { public int id; public Vector2 pos, delta; public TouchPhase phase; }
+
+// Dokunma VE fare girdisini tek listede toplar (bazi tabletler dokunmayi fare olarak gonderir)
+public static class PointerInput
+{
+    static int frame = -1;
+    static readonly List<Ptr> list = new List<Ptr>();
+    static Vector2 lastMouse;
+    public static int MaxTouch, MouseEvents;
+    public static string Last = "-";
+
+    public static List<Ptr> Get()
+    {
+        if (frame == Time.frameCount) return list;
+        frame = Time.frameCount;
+        list.Clear();
+        int n = Input.touchCount;
+        if (n > MaxTouch) MaxTouch = n;
+        for (int i = 0; i < n; i++)
+        {
+            Touch t = Input.GetTouch(i);
+            Ptr p; p.id = t.fingerId; p.pos = t.position; p.delta = t.deltaPosition; p.phase = t.phase;
+            list.Add(p);
+        }
+        Vector2 mp = Input.mousePosition;
+        if (n == 0)
+        {
+            bool down = Input.GetMouseButtonDown(0), up = Input.GetMouseButtonUp(0), held = Input.GetMouseButton(0);
+            if (down || held || up)
+            {
+                Ptr p; p.id = 999; p.pos = mp;
+                p.delta = down ? Vector2.zero : mp - lastMouse;
+                p.phase = down ? TouchPhase.Began : (up ? TouchPhase.Ended : (p.delta.sqrMagnitude > 0.01f ? TouchPhase.Moved : TouchPhase.Stationary));
+                list.Add(p);
+                MouseEvents++;
+            }
+        }
+        lastMouse = mp;
+        if (list.Count > 0) Last = list[0].id + ":" + list[0].phase + " (" + Mathf.RoundToInt(list[0].pos.x) + "," + Mathf.RoundToInt(list[0].pos.y) + ")";
+        return list;
+    }
+}
 
 // Ekrandaki son hatayi tutar (telefonda log goremedigimiz icin ekranda gosteriyoruz)
 public static class DebugLog
@@ -112,6 +157,7 @@ public class MobileControls : MonoBehaviour
 
     void Start()
     {
+        Input.multiTouchEnabled = true;
         Canvas canvas = EnsureCanvas();
         uiK = 1f / Mathf.Max(0.01f, canvas.scaleFactor);
         float W = Screen.width, H = Screen.height;
@@ -167,39 +213,25 @@ public class MobileControls : MonoBehaviour
         if (joyBg == null) return;
         float W = Screen.width, H = Screen.height;
         bool joyFound = false;
+        List<Ptr> ptrs = PointerInput.Get();
 
-        for (int i = 0; i < Input.touchCount; i++)
+        for (int i = 0; i < ptrs.Count; i++)
         {
-            Touch t = Input.GetTouch(i);
+            Ptr t = ptrs[i];
             if (t.phase == TouchPhase.Began)
             {
-                if (IsJumpTouch(t.position)) { jumpQueued = true; continue; }
-                if (joyId == -1 && t.position.x < W * 0.5f && t.position.y < H * 0.68f)
+                if (IsJumpTouch(t.pos)) { jumpQueued = true; continue; }
+                if (joyId == -1 && t.pos.x < W * 0.5f && t.pos.y < H * 0.68f)
                 {
-                    joyId = t.fingerId; joyCenter = ClampJoy(t.position); SetPos(joyBg, joyCenter);
+                    joyId = t.id; joyCenter = ClampJoy(t.pos); SetPos(joyBg, joyCenter);
                 }
             }
-            if (t.fingerId == joyId)
+            if (t.id == joyId)
             {
                 if (t.phase == TouchPhase.Ended || t.phase == TouchPhase.Canceled) { ReleaseJoy(); }
-                else { joyFound = true; UpdateJoy(t.position); }
+                else { joyFound = true; UpdateJoy(t.pos); }
             }
         }
-#if UNITY_EDITOR
-        if (Input.touchCount == 0)
-        {
-            Vector2 mp = Input.mousePosition;
-            if (Input.GetMouseButtonDown(0))
-            {
-                if (IsJumpTouch(mp)) jumpQueued = true;
-                else if (mp.x < W * 0.5f && mp.y < H * 0.68f) { joyId = 999; joyCenter = ClampJoy(mp); SetPos(joyBg, joyCenter); }
-            }
-            if (joyId == 999)
-            {
-                if (Input.GetMouseButton(0)) { joyFound = true; UpdateJoy(mp); }
-            }
-        }
-#endif
         if (joyId != -1 && !joyFound) ReleaseJoy();
 
         labelTimer -= Time.deltaTime;
@@ -213,9 +245,9 @@ public class MobileControls : MonoBehaviour
             District dom; float u = IstanbulGeo.Urban(p.x, p.z, out dom);
             districtLabel.text = (dom != null && u > 0.15f) ? dom.name : "Yeşil Alan";
         }
-        string dbg = string.Format("y={0:F2} zemin={1:F2} yerde={2} yuzme={3} joy=({4:F2},{5:F2}) dokunma={6} kare={7}",
+        string dbg = string.Format("y={0:F2} zemin={1:F2} yerde={2} yuzme={3} joy=({4:F2},{5:F2}) dokunma={6} kare={7} tmax={8} fare={9} son={10}",
             p.y, player != null ? player.DbgGround : 0f, player != null && player.DbgGrounded, player != null && player.DbgSwimming,
-            Move.x, Move.y, Input.touchCount, player != null ? player.DbgFrames : 0);
+            Move.x, Move.y, Input.touchCount, player != null ? player.DbgFrames : 0, PointerInput.MaxTouch, PointerInput.MouseEvents, PointerInput.Last);
         if (!string.IsNullOrEmpty(DebugLog.LastError)) dbg += "\nHATA: " + DebugLog.LastError;
         debugLabel.text = dbg;
     }

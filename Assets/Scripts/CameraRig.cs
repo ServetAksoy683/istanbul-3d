@@ -25,30 +25,27 @@ public class CameraRig : MonoBehaviour
 
     void ReadInput()
     {
-        for (int i = 0; i < Input.touchCount; i++)
+        var ptrs = PointerInput.Get();
+        bool found = false;
+        for (int i = 0; i < ptrs.Count; i++)
         {
-            Touch t = Input.GetTouch(i);
+            Ptr t = ptrs[i];
             if (t.phase == TouchPhase.Began)
             {
                 // Sag yarida baslayan, ziplama dugmesi olmayan dokunus kamerayi cevirir
-                if (touchId == -1 && t.position.x > Screen.width * 0.5f && !MobileControls.IsJumpTouch(t.position)) touchId = t.fingerId;
+                if (touchId == -1 && t.pos.x > Screen.width * 0.5f && !MobileControls.IsJumpTouch(t.pos)) touchId = t.id;
             }
-            else if (t.fingerId == touchId)
+            if (t.id == touchId)
             {
-                if (t.phase == TouchPhase.Moved)
+                if (t.phase == TouchPhase.Ended || t.phase == TouchPhase.Canceled) { touchId = -1; }
+                else
                 {
-                    Yaw += t.deltaPosition.x * sensitivity;
-                    Pitch = Mathf.Clamp(Pitch - t.deltaPosition.y * sensitivity, -8f, 62f);
+                    found = true;
+                    Yaw += t.delta.x * sensitivity;
+                    Pitch = Mathf.Clamp(Pitch - t.delta.y * sensitivity, -8f, 62f);
                 }
-                else if (t.phase == TouchPhase.Ended || t.phase == TouchPhase.Canceled) touchId = -1;
             }
         }
-#if UNITY_EDITOR || UNITY_STANDALONE
-        if (Input.GetMouseButton(1))
-        {
-            Yaw += Input.GetAxis("Mouse X") * 3f;
-            Pitch = Mathf.Clamp(Pitch - Input.GetAxis("Mouse Y") * 3f, -8f, 62f);
-        }
-#endif
+        if (touchId != -1 && !found) touchId = -1;
     }
 }
