@@ -9,7 +9,21 @@ public class GameBootstrap : MonoBehaviour
     public Light sun;
     Text loadText; Image loadBar; GameObject loadRoot;
 
+    void Awake() { DebugLog.Hook(); }
     void Start() { StartCoroutine(Run()); }
+
+    void Update()
+    {
+        // Yukleme sirasinda hata olursa ekranda goster
+        if (loadText != null && !string.IsNullOrEmpty(DebugLog.LastError))
+            loadText.text = "HATA: " + DebugLog.LastError;
+    }
+
+    IEnumerator FitLater()
+    {
+        yield return null; yield return null; yield return null;
+        player.FitModel();
+    }
 
     IEnumerator Run()
     {
@@ -50,6 +64,8 @@ public class GameBootstrap : MonoBehaviour
 
         MobileControls mc = gameObject.AddComponent<MobileControls>();
         mc.playerT = player.transform;
+        mc.player = player;
+        StartCoroutine(FitLater());
         MiniMap mm = gameObject.AddComponent<MiniMap>();
         mm.target = player.transform; mm.rig = cameraRig;
         if (loadRoot != null) Destroy(loadRoot);

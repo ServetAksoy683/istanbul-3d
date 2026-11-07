@@ -1,23 +1,54 @@
 using UnityEngine;
-using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
+// Ekrandaki son hatayi tutar (telefonda log goremedigimiz icin ekranda gosteriyoruz)
+public static class DebugLog
+{
+    public static string LastError;
+    static bool hooked;
+    public static void Hook()
+    {
+        if (hooked) return;
+        hooked = true;
+        Application.logMessageReceived += (cond, stack, type) =>
+        {
+            if (type == LogType.Exception || type == LogType.Error)
+            {
+                string s = cond;
+                if (type == LogType.Exception && stack != null)
+                {
+                    int nl = stack.IndexOf('\n');
+                    s += " @ " + (nl > 0 ? stack.Substring(0, nl) : stack);
+                }
+                LastError = s.Length > 220 ? s.Substring(0, 220) : s;
+            }
+        };
+    }
+}
+
+// Joystick ve ziplama dugmesi: EventSystem'e bagimli degil, dogrudan dokunmalari okur.
 public class MobileControls : MonoBehaviour
 {
     public static Vector2 Move;
     static bool jumpQueued;
     public static Canvas Root;
+    static Vector2 jumpCenter;
+    static float jumpRadius = 1f;
+
     public Transform playerT;
-    Text districtLabel;
-    float labelTimer;
+    public PlayerController player;
+
+    Text districtLabel, debugLabel;
+    RectTransform joyBg, joyKnob;
+    int joyId = -1;
+    Vector2 joyCenter, joyHome;
+    float joyRadius, uiK = 1f, labelTimer;
 
     public static bool ConsumeJump() { bool j = jumpQueued; jumpQueued = false; return j; }
     public static void QueueJump() { jumpQueued = true; }
+    public static bool IsJumpTouch(Vector2 p) { return (p - jumpCenter).sqrMagnitude <= jumpRadius * jumpRadius * 1.4f; }
 
-    public static Font UiFont()
-    {
-        return Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-    }
+    public static Font UiFont() { return Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf"); }
 
     public static Sprite MakeCircle(int size, float ring)
     {
@@ -40,8 +71,6 @@ public class MobileControls : MonoBehaviour
     public static Canvas EnsureCanvas()
     {
         if (Root != null) return Root;
-        if (FindObjectOfType<EventSystem>() == null)
-            new GameObject("EventSystem", typeof(EventSystem), typeof(StandaloneInputModule));
         GameObject go = new GameObject("UI");
         Canvas c = go.AddComponent<Canvas>();
         c.renderMode = RenderMode.ScreenSpaceOverlay;
@@ -50,124 +79,144 @@ public class MobileControls : MonoBehaviour
         cs.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
         cs.referenceResolution = new Vector2(1920, 1080);
         cs.matchWidthOrHeight = 0.5f;
-        go.AddComponent<GraphicRaycaster>();
         Root = c;
         return c;
     }
 
+    RectTransform MakeImage(string name, Transform parent, Sprite sp, Color col, float sizePx, bool centerAnchor)
+    {
+        GameObject go = new GameObject(name, typeof(RectTransform), typeof(Image));
+        go.transform.SetParent(parent, false);
+        RectTransform rt = go.GetComponent<RectTransform>();
+        Vector2 a = centerAnchor ? new Vector2(0.5f, 0.5f) : Vector2.zero;
+        rt.anchorMin = a; rt.anchorMax = a; rt.pivot = new Vector2(0.5f, 0.5f);
+        rt.sizeDelta = new Vector2(sizePx, sizePx) * uiK;
+        Image im = go.GetComponent<Image>(); im.sprite = sp; im.color = col; im.raycastTarget = false;
+        return rt;
+    }
+
+    Text MakeText(string name, Transform parent, int size, TextAnchor anchor, Color col, Vector2 pos, float w)
+    {
+        GameObject go = new GameObject(name, typeof(RectTransform), typeof(Text));
+        go.transform.SetParent(parent, false);
+        Text t = go.GetComponent<Text>();
+        t.font = UiFont(); t.fontSize = size; t.alignment = anchor; t.color = col; t.raycastTarget = false;
+        t.horizontalOverflow = HorizontalWrapMode.Wrap; t.verticalOverflow = VerticalWrapMode.Overflow;
+        RectTransform rt = go.GetComponent<RectTransform>();
+        rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 1f); rt.pivot = new Vector2(0.5f, 1f);
+        rt.sizeDelta = new Vector2(w, 60); rt.anchoredPosition = pos;
+        return t;
+    }
+
+    void SetPos(RectTransform rt, Vector2 px) { rt.anchoredPosition = px * uiK; }
+
     void Start()
     {
         Canvas canvas = EnsureCanvas();
+        uiK = 1f / Mathf.Max(0.01f, canvas.scaleFactor);
+        float W = Screen.width, H = Screen.height;
         Sprite ring = MakeCircle(256, 6f), disc = MakeCircle(128, 0f);
 
-        // Yuzen joystick alani (sol alt)
-        GameObject zone = new GameObject("JoystickZone", typeof(RectTransform), typeof(Image), typeof(VirtualJoystick));
-        zone.transform.SetParent(canvas.transform, false);
-        RectTransform zr = zone.GetComponent<RectTransform>();
-        zr.anchorMin = zr.anchorMax = Vector2.zero; zr.pivot = Vector2.zero;
-        zr.anchoredPosition = Vector2.zero; zr.sizeDelta = new Vector2(900, 800);
-        zone.GetComponent<Image>().color = new Color(0, 0, 0, 0);
+        joyRadius = H * 0.12f;
+        joyHome = new Vector2(W * 0.13f, H * 0.27f);
+        joyBg = MakeImage("JoyBg", canvas.transform, ring, new Color(1, 1, 1, 0.45f), joyRadius * 2.6f, false);
+        joyKnob = MakeImage("JoyKnob", joyBg, disc, new Color(1, 1, 1, 0.65f), joyRadius * 1.1f, true);
+        joyKnob.anchoredPosition = Vector2.zero;
+        SetPos(joyBg, joyHome);
 
-        GameObject bg = new GameObject("Bg", typeof(RectTransform), typeof(Image));
-        bg.transform.SetParent(zone.transform, false);
-        RectTransform br = bg.GetComponent<RectTransform>();
-        br.anchorMin = br.anchorMax = Vector2.zero; br.pivot = new Vector2(0.5f, 0.5f);
-        br.sizeDelta = new Vector2(300, 300); br.anchoredPosition = new Vector2(260, 260);
-        Image bgi = bg.GetComponent<Image>(); bgi.sprite = ring; bgi.color = new Color(1, 1, 1, 0.45f); bgi.raycastTarget = false;
-
-        GameObject knob = new GameObject("Knob", typeof(RectTransform), typeof(Image));
-        knob.transform.SetParent(bg.transform, false);
-        RectTransform kr = knob.GetComponent<RectTransform>();
-        kr.sizeDelta = new Vector2(130, 130); kr.anchoredPosition = Vector2.zero;
-        Image ki = knob.GetComponent<Image>(); ki.sprite = disc; ki.color = new Color(1, 1, 1, 0.65f); ki.raycastTarget = false;
-
-        VirtualJoystick vj = zone.GetComponent<VirtualJoystick>();
-        vj.zone = zr; vj.bg = br; vj.knob = kr; vj.radius = 110f;
-
-        // Ziplama dugmesi (sol tarafta, joystickin ustunde)
-        GameObject jb = new GameObject("JumpButton", typeof(RectTransform), typeof(Image), typeof(JumpButton));
-        jb.transform.SetParent(canvas.transform, false);
-        RectTransform jr = jb.GetComponent<RectTransform>();
-        jr.anchorMin = jr.anchorMax = Vector2.zero; jr.pivot = new Vector2(0.5f, 0.5f);
-        jr.sizeDelta = new Vector2(190, 190); jr.anchoredPosition = new Vector2(560, 440);
-        Image ji = jb.GetComponent<Image>(); ji.sprite = disc; ji.color = new Color(1, 1, 1, 0.35f);
+        // Ziplama dugmesi: SAG altta
+        jumpCenter = new Vector2(W - H * 0.20f, H * 0.25f);
+        jumpRadius = H * 0.10f;
+        RectTransform jr = MakeImage("Jump", canvas.transform, disc, new Color(1, 1, 1, 0.35f), jumpRadius * 2f, false);
+        SetPos(jr, jumpCenter);
         GameObject jt = new GameObject("Label", typeof(RectTransform), typeof(Text));
-        jt.transform.SetParent(jb.transform, false);
+        jt.transform.SetParent(jr, false);
         Text jtx = jt.GetComponent<Text>();
-        jtx.font = UiFont(); jtx.text = "ZIPLA"; jtx.fontSize = 38; jtx.alignment = TextAnchor.MiddleCenter;
+        jtx.font = UiFont(); jtx.text = "ZIPLA"; jtx.fontSize = 34; jtx.alignment = TextAnchor.MiddleCenter;
         jtx.color = new Color(1, 1, 1, 0.95f); jtx.raycastTarget = false;
         RectTransform jtr = jt.GetComponent<RectTransform>();
         jtr.anchorMin = Vector2.zero; jtr.anchorMax = Vector2.one; jtr.offsetMin = jtr.offsetMax = Vector2.zero;
 
-        // Semt adi (ust orta)
-        GameObject lb = new GameObject("District", typeof(RectTransform), typeof(Text));
-        lb.transform.SetParent(canvas.transform, false);
-        districtLabel = lb.GetComponent<Text>();
-        districtLabel.font = UiFont(); districtLabel.fontSize = 44; districtLabel.alignment = TextAnchor.MiddleCenter;
-        districtLabel.color = new Color(1, 1, 1, 0.9f); districtLabel.raycastTarget = false;
-        Shadow sh = lb.AddComponent<Shadow>(); sh.effectColor = new Color(0, 0, 0, 0.8f); sh.effectDistance = new Vector2(2, -2);
-        RectTransform lr = lb.GetComponent<RectTransform>();
-        lr.anchorMin = new Vector2(0.5f, 1f); lr.anchorMax = new Vector2(0.5f, 1f); lr.pivot = new Vector2(0.5f, 1f);
-        lr.sizeDelta = new Vector2(900, 70); lr.anchoredPosition = new Vector2(0, -24);
+        districtLabel = MakeText("District", canvas.transform, 44, TextAnchor.UpperCenter, new Color(1, 1, 1, 0.92f), new Vector2(0, -24), 900);
+        Shadow sh = districtLabel.gameObject.AddComponent<Shadow>(); sh.effectColor = new Color(0, 0, 0, 0.8f); sh.effectDistance = new Vector2(2, -2);
+        debugLabel = MakeText("Debug", canvas.transform, 24, TextAnchor.UpperCenter, new Color(1f, 0.95f, 0.3f, 0.95f), new Vector2(0, -85), 1600);
+    }
+
+    Vector2 ClampJoy(Vector2 p)
+    {
+        float m = joyRadius * 1.4f;
+        return new Vector2(Mathf.Clamp(p.x, m, Screen.width * 0.5f), Mathf.Clamp(p.y, m, Screen.height * 0.68f));
+    }
+
+    void ReleaseJoy()
+    {
+        joyId = -1; Move = Vector2.zero;
+        if (joyKnob != null) joyKnob.anchoredPosition = Vector2.zero;
+        if (joyBg != null) SetPos(joyBg, joyHome);
+    }
+
+    void UpdateJoy(Vector2 pos)
+    {
+        Vector2 d = (pos - joyCenter) / joyRadius;
+        Move = Vector2.ClampMagnitude(d, 1f);
+        joyKnob.anchoredPosition = Move * joyRadius * uiK;
     }
 
     void Update()
     {
-        if (playerT == null || districtLabel == null) return;
+        if (joyBg == null) return;
+        float W = Screen.width, H = Screen.height;
+        bool joyFound = false;
+
+        for (int i = 0; i < Input.touchCount; i++)
+        {
+            Touch t = Input.GetTouch(i);
+            if (t.phase == TouchPhase.Began)
+            {
+                if (IsJumpTouch(t.position)) { jumpQueued = true; continue; }
+                if (joyId == -1 && t.position.x < W * 0.5f && t.position.y < H * 0.68f)
+                {
+                    joyId = t.fingerId; joyCenter = ClampJoy(t.position); SetPos(joyBg, joyCenter);
+                }
+            }
+            if (t.fingerId == joyId)
+            {
+                if (t.phase == TouchPhase.Ended || t.phase == TouchPhase.Canceled) { ReleaseJoy(); }
+                else { joyFound = true; UpdateJoy(t.position); }
+            }
+        }
+#if UNITY_EDITOR
+        if (Input.touchCount == 0)
+        {
+            Vector2 mp = Input.mousePosition;
+            if (Input.GetMouseButtonDown(0))
+            {
+                if (IsJumpTouch(mp)) jumpQueued = true;
+                else if (mp.x < W * 0.5f && mp.y < H * 0.68f) { joyId = 999; joyCenter = ClampJoy(mp); SetPos(joyBg, joyCenter); }
+            }
+            if (joyId == 999)
+            {
+                if (Input.GetMouseButton(0)) { joyFound = true; UpdateJoy(mp); }
+            }
+        }
+#endif
+        if (joyId != -1 && !joyFound) ReleaseJoy();
+
         labelTimer -= Time.deltaTime;
-        if (labelTimer > 0f) return;
-        labelTimer = 0.5f;
+        if (labelTimer > 0f || playerT == null) return;
+        labelTimer = 0.25f;
         Vector3 p = playerT.position;
         float d = IstanbulGeo.SignedDist(p.x, p.z);
-        if (d < -4f) { districtLabel.text = "İstanbul Boğazı"; return; }
-        District dom; float u = IstanbulGeo.Urban(p.x, p.z, out dom);
-        districtLabel.text = (dom != null && u > 0.15f) ? dom.name : "Yeşil Alan";
+        if (d < -4f) districtLabel.text = "İstanbul Boğazı";
+        else
+        {
+            District dom; float u = IstanbulGeo.Urban(p.x, p.z, out dom);
+            districtLabel.text = (dom != null && u > 0.15f) ? dom.name : "Yeşil Alan";
+        }
+        string dbg = string.Format("y={0:F2} zemin={1:F2} yerde={2} yuzme={3} joy=({4:F2},{5:F2}) dokunma={6} kare={7}",
+            p.y, player != null ? player.DbgGround : 0f, player != null && player.DbgGrounded, player != null && player.DbgSwimming,
+            Move.x, Move.y, Input.touchCount, player != null ? player.DbgFrames : 0);
+        if (!string.IsNullOrEmpty(DebugLog.LastError)) dbg += "\nHATA: " + DebugLog.LastError;
+        debugLabel.text = dbg;
     }
-}
-
-public class VirtualJoystick : MonoBehaviour, IPointerDownHandler, IDragHandler, IPointerUpHandler
-{
-    public RectTransform zone, bg, knob;
-    public float radius = 110f;
-    int pid = int.MinValue;
-    Vector2 home;
-
-    void Awake() { }
-
-    public void OnPointerDown(PointerEventData e)
-    {
-        if (pid != int.MinValue) return;
-        pid = e.pointerId;
-        if (home == Vector2.zero) home = bg.anchoredPosition;
-        Vector2 local;
-        RectTransformUtility.ScreenPointToLocalPointInRectangle(zone, e.position, e.pressEventCamera, out local);
-        local.x = Mathf.Clamp(local.x, radius + 20f, zone.sizeDelta.x - radius);
-        local.y = Mathf.Clamp(local.y, radius + 20f, zone.sizeDelta.y - radius);
-        bg.anchoredPosition = local;
-        OnDrag(e);
-    }
-
-    public void OnDrag(PointerEventData e)
-    {
-        if (e.pointerId != pid) return;
-        Vector2 local;
-        RectTransformUtility.ScreenPointToLocalPointInRectangle(bg, e.position, e.pressEventCamera, out local);
-        Vector2 v = Vector2.ClampMagnitude(local / radius, 1f);
-        knob.anchoredPosition = v * radius;
-        MobileControls.Move = v;
-    }
-
-    public void OnPointerUp(PointerEventData e)
-    {
-        if (e.pointerId != pid) return;
-        pid = int.MinValue;
-        MobileControls.Move = Vector2.zero;
-        knob.anchoredPosition = Vector2.zero;
-        bg.anchoredPosition = home;
-    }
-}
-
-public class JumpButton : MonoBehaviour, IPointerDownHandler
-{
-    public void OnPointerDown(PointerEventData e) { MobileControls.QueueJump(); }
 }

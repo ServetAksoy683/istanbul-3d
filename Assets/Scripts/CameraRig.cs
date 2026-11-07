@@ -1,5 +1,4 @@
 using UnityEngine;
-using UnityEngine.EventSystems;
 
 public class CameraRig : MonoBehaviour
 {
@@ -31,8 +30,8 @@ public class CameraRig : MonoBehaviour
             Touch t = Input.GetTouch(i);
             if (t.phase == TouchPhase.Began)
             {
-                bool overUi = EventSystem.current != null && EventSystem.current.IsPointerOverGameObject(t.fingerId);
-                if (touchId == -1 && t.position.x > Screen.width * 0.42f && !overUi) touchId = t.fingerId;
+                // Sag yarida baslayan, ziplama dugmesi olmayan dokunus kamerayi cevirir
+                if (touchId == -1 && t.position.x > Screen.width * 0.5f && !MobileControls.IsJumpTouch(t.position)) touchId = t.fingerId;
             }
             else if (t.fingerId == touchId)
             {

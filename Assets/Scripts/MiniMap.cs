@@ -35,7 +35,7 @@ public class MiniMap : MonoBehaviour
         RectTransform mr = mask.GetComponent<RectTransform>();
         mr.anchorMin = mr.anchorMax = new Vector2(0, 1); mr.pivot = new Vector2(0, 1);
         mr.sizeDelta = new Vector2(320, 320); mr.anchoredPosition = new Vector2(40, -40);
-        Image mi = mask.GetComponent<Image>(); mi.sprite = disc; mi.raycastTarget = true;
+        Image mi = mask.GetComponent<Image>(); mi.sprite = disc; mi.raycastTarget = false;
         mask.GetComponent<Mask>().showMaskGraphic = false;
 
         GameObject img = new GameObject("View", typeof(RectTransform), typeof(RawImage));
